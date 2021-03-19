@@ -11,9 +11,10 @@ def main():
     cur = con.cursor()
 
     # Create table
-    cur.execute('''CREATE TABLE IF NOT EXISTS bookmarks(
+    cur.execute('''CREATE TABLE IF NOT EXISTS jobPostingBookmark(
         jobid string,
         linktext string,
+        hasApplied boolean,
         UNIQUE(jobid)
     )
     ''')
@@ -36,7 +37,7 @@ def main():
     driver = webdriver.Chrome(options=options,
                                 executable_path=chrome_driver_path)
 
-    driver.get("https://www.linkedin.com/jobs/search/?f_JT=P&f_WRA=true&geoId=104145663&keywords=machine%20learning&location=Redmond%2C%20Washington%2C%20United%20States")
+    driver.get("https://www.linkedin.com/jobs/search/?f_WRA=true&geoId=104145663&keywords=machine%20learning&location=Redmond%2C%20Washington%2C%20United%20States")
 
     try:
         sign_in_button = driver.find_element_by_link_text("Sign in")
@@ -64,14 +65,24 @@ def main():
     con.close()
 
     time.sleep(5)
-def loop(con,cur, driver, all_listings):
-    df = pd.read_sql_query("SELECT * FROM bookmarks ORDER BY jobid", con)
 
-    # Verify that result of SQL query is stored in the dataframe
+def loop(con,cur, driver, all_listings):
+    df = pd.read_sql_query("SELECT * FROM jobPostingBookmark where hasApplied = 0 ORDER BY jobid", con)
     print(df.head())
+    for index, row in df.iterrows():
+        print(row['linktext'])
+        jobPrompt = "{},{},{}".format(row['jobid'], row['linktext'], row['hasApplied'])
+        val = input("Have you applied for  " + jobPrompt + "? y/n")
+        if val == 'y':
+            cur.execute('update jobPostingBookmark set hasApplied = 1 where jobid =\'' + str(row['jobid']) + '\'')
+            con.commit()
+        print(val)
+    df = pd.read_sql_query("SELECT * FROM jobPostingBookmark ORDER BY jobid", con)
     for listing in all_listings:
-        if not df['jobid'].astype(str).str.contains(str(listing.get_attribute("data-job-id"))).any():
-            cur.execute('INSERT OR IGNORE INTO bookmarks(jobid,linktext) VALUES(\'' + str(listing.get_attribute("data-job-id")) + '\',\'' + listing.text + '\')')
+        jobid = listing.get_attribute("data-job-id")
+        existingRow = df.query('jobid == ' + jobid + ' and hasApplied == 1', inplace = False) 
+        if len(existingRow) == 0:
+            cur.execute('INSERT OR IGNORE INTO jobPostingBookmark(jobid,linktext,hasApplied) VALUES(\'' + str(listing.get_attribute("data-job-id")) + '\',\'' + listing.text + '\',0)')
             con.commit()
             print('writing value')
             listing.click()
@@ -116,7 +127,9 @@ def loop(con,cur, driver, all_listings):
             except NoSuchElementException:
                 print("No application button, skipped.")
                 continue
-    time.sleep(300)
+    #keep open for a week if need be
+    print('wait for some time to re-query the site')
+    time.sleep(60 * 60 * 24 * 7)
     # caution. Will stack overflow eventually
     loop(con,cur,driver, all_listings)
 main()
